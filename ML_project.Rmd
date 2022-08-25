@@ -1,0 +1,324 @@
+---
+title: "Machine Learning - Cource Project"
+output:
+  html_document: default
+  pdf_document: default
+date: "2022-08-24"
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+### Hagit Glickman
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+## Data
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+## Goal
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+
+## Loading Libraries
+
+```{r}
+
+library(lattice)
+library (ggplot2)
+library(caret)
+library(dplyr)
+library(groupdata2)
+library(randomForest)
+```
+## Reading Data
+
+pml_training contains 19622 observations and 160 variables.
+
+pml_testing contains 20 observations and 160 variables.
+
+```{r}
+setwd("C:/Users/Administrator/Documents/My R/Machine Learning/project")
+pml_training <- read.csv("pml_training.csv")
+pml_testing <- read.csv("pml_testing.csv")
+```
+
+## Cleaning data
+
+The data include computed summery variables like max, min, avg, kurtosis and etc..
+The summery variables are computed only at the end of activity windows and hence include 
+large amount of missing values. In order to remove these variables a function 'drop_from_df' is defined.
+It gets a data file and a string as an input and return the data file without any variable (column) with a name containing the string.  
+
+
+```{r}
+drop_from_df <- function(df, string) {
+  string <- df[ , grepl(string,colnames(df))]
+  string_name <- names(string)
+  df <- df[ , !(names(df) %in% string_name)]
+  return(df)
+}
+```
+
+The computed summery variables are removed from both data files -training and testing.
+Variables like X, user_name and new_window are also removed from the analysis. 
+
+After the cleaning:
+
+pml_training contains 19622 observations and 53 variables.
+
+pml_testing contains 20 observations and 53 variables.
+
+
+```{r}
+pml_training <- drop_from_df(pml_training, "kurtosis")
+pml_training <- drop_from_df(pml_training, "skewness") 
+pml_training <- drop_from_df(pml_training, "max")
+pml_training <- drop_from_df(pml_training, "min")
+pml_training <- drop_from_df(pml_training, "amplitude")
+pml_training <- drop_from_df(pml_training, "avg")
+pml_training <- drop_from_df(pml_training, "stddev")
+pml_training <- drop_from_df(pml_training, "var")
+pml_training <- subset(pml_training, select=-c(X, user_name, raw_timestamp_part_1,
+                                               raw_timestamp_part_2, cvtd_timestamp,
+                                               new_window, num_window))
+
+
+pml_testing <- drop_from_df(pml_testing, "kurtosis")
+pml_testing <- drop_from_df(pml_testing, "skewness") 
+pml_testing <- drop_from_df(pml_testing, "max")
+pml_testing <- drop_from_df(pml_testing, "min")
+pml_testing <- drop_from_df(pml_testing, "amplitude")
+pml_testing <- drop_from_df(pml_testing, "avg")
+pml_testing <- drop_from_df(pml_testing, "stddev")
+pml_testing <- drop_from_df(pml_testing, "var")
+pml_testing <- subset(pml_testing, select=-c(X, user_name, raw_timestamp_part_1,
+                                               raw_timestamp_part_2, cvtd_timestamp,
+                                               new_window, num_window))
+```
+## Spliting data and validation
+
+In order to evaluate and choose an appropriate classification model,
+the training data is split into two sets - training (70%) and validation (30%). 
+The training data is used to build 3 different classification models, LDA, Naive
+Bayes and Random Forest. The validation data is used to evaluate the models and choose 
+the model with the highest accuracy level. 
+
+
+After cleaning and splitting there are 3 working data sets:
+
+training - 13735 observations and 53 variables.
+validation - 5887 observations and 53 variables.
+pml_testing - 20 observations and 53 variables.
+
+
+```{r}
+set.seed (9876)
+
+pml_training$classe = factor(pml_training$classe)
+inTrain <- createDataPartition(y=pml_training$classe, p = 0.7, list=FALSE)
+training <- pml_training[inTrain,]
+validation <- pml_training[-inTrain,]
+
+```
+
+## Ploting predictors
+
+Before starting to build a classification modal, a series of plots were generated 
+in order to understand how the data actually look and how the data interact with 
+each other. The following plot is an example, showing the distribution of 3 different 
+measures 'roll', 'pitch' and 'yaw', measured on 4 different accelerometers located on 
+the belt, forearm, arm  and dumbell, as a function of the 5 ways of performing barbell 
+lifts A-E - the 'classe' variable. 
+
+As we can learn from the plot there are differences between the distributions of predictors
+across ways of barbell lifts. These differences are useful in classifying problem.
+It is also clear that it will be better to standardize the predictors as the scales
+changes quite a lot ((-50,50) to (-150,150)).
+
+```{r}
+par(mfrow=c(3,4))
+
+boxplot(roll_belt~classe,
+        data=pml_training,
+        main="'roll_belt'",
+        xlab="",
+        ylab="",
+        col="skyblue2",
+        border="black"
+)
+boxplot(roll_arm~classe,
+        data=pml_training,
+        main="'roll_arm'",
+        xlab="",
+        ylab="",
+        col="darksalmon",
+        border="black"
+)
+boxplot(roll_dumbbell~classe,
+        data=pml_training,
+        main="'roll_dumbbell'",
+        xlab="",
+        ylab="",
+        col="mediumaquamarine",
+        border="black"
+)
+boxplot(roll_forearm~classe,
+        data=pml_training,
+        main="'roll_forearm'",
+        xlab="",
+        ylab="",
+        col="plum2",
+        border="black"
+)
+boxplot(pitch_belt~classe,
+        data=pml_training,
+        main="'pitch_belt'",
+        xlab="",
+        ylab="",
+        col="skyblue2",
+        border="black"
+)
+boxplot(pitch_arm~classe,
+        data=pml_training,
+        main="'pitch_arm'",
+        xlab="",
+        ylab="",
+        col="darksalmon",
+        border="black"
+)
+boxplot(pitch_dumbbell~classe,
+        data=pml_training,
+        main="'pitch_dumbbell'",
+        xlab="",
+        ylab="",
+        col="mediumaquamarine",
+        border="black"
+)
+boxplot(pitch_forearm~classe,
+        data=pml_training,
+        main="'pitch_forearm'",
+        xlab="",
+        ylab="",
+        col="plum2",
+        border="black"
+)
+boxplot(yaw_belt~classe,
+        data=pml_training,
+        main="'yaw_belt'",
+        xlab="way of barbell lift",
+        ylab="",
+        col="skyblue2",
+        border="black"
+)
+boxplot(yaw_arm~classe,
+        data=pml_training,
+        main="'yaw_arm'",
+        xlab="way of barbell lift",
+        ylab="",
+        col="darksalmon",
+        border="black"
+)
+boxplot(yaw_dumbbell~classe,
+        data=pml_training,
+        main="'yaw_dumbbell'",
+        xlab="way of barbell lift",
+        ylab="",
+        col="mediumaquamarine",
+        border="black"
+)
+boxplot(yaw_forearm~classe,
+        data=pml_training,
+        main="'yaw_forearm'",
+        xlab="way of barbell lift",
+        ylab="",
+        col="plum2",
+        border="black"
+)
+```
+
+## Centering and Scaling
+
+```{r}
+preObj <- preProcess(training[,-53], method = c("center", "scale"))
+
+training_s <- predict(preObj, training[,-53])
+classe <-  training$classe
+training_s <- cbind (training_s, classe)
+
+validation_s <- predict(preObj, validation[,-53])
+classe <-  validation$classe
+validation_s <- cbind (validation_s, classe)
+
+testing_s <-predict(preObj, pml_testing[,-53])
+testing_s <- cbind (testing_s, pml_testing$problem_id)
+```
+
+##  The LDA Classifier
+```{r}
+repeat_cv <- trainControl(method='repeatedcv', number=5, repeats=3)
+classifier_lda <- train(classe~., 
+                 data=training_s,
+                 method="lda",
+                 trControl=repeat_cv,
+                 metric='Accuracy',
+                 prox=TRUE)
+classifier_lda
+prediction_lda <- predict(classifier_lda, newdata=validation_s)
+confusionMatrix(prediction_lda, validation_s$classe)
+```
+
+
+## The Naive Bayes Classifier
+
+```{r}
+repeat_cv <- trainControl(method='repeatedcv', number=5, repeats=3)
+classifier_NB <- train(classe~., 
+                       data=training_s,
+                       method="nb",
+                       trControl=repeat_cv,
+                       metric='Accuracy',
+                       prox=TRUE)
+classifier_NB
+prediction_NB <- predict(classifier_NB, newdata=validation_s) 
+confusionMatrix(prediction_NB, validation_s$classe)
+```
+
+## The Random Forest Classifier
+
+```{r}
+classifier_RF = randomForest(classe~., data=training_s, ntree = 500)
+classifier_RF
+prediction_RF <- predict(classifier_RF, newdata=validation_s) 
+confusionMatrix(prediction_RF, validation_s$classe)
+
+```
+
+The Random Forests gave an Accuracy of 99.42%, which is very high and higher than the LDA (70.35%)
+and the Naive Bayes (74.55%). 
+
+The final model is Random Forest. The expected out-of-sample error is 100-99.42 = 0.58%.
+
+## Predicting Test Cases
+
+```{r}
+prediction_RF_test <- predict(classifier_RF, newdata=testing_s)
+prediction_RF_test 
+```
+
+## END
+
+
+
+
+
+
+
+
+
